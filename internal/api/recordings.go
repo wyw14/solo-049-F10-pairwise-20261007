@@ -6,7 +6,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"orbitlink/internal/audit"
 	"orbitlink/internal/decoder"
 	"orbitlink/internal/recorder"
 )
@@ -35,11 +34,6 @@ func (r *Runtime) appendFrame(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	writeJSON(writer, http.StatusAccepted, map[string]any{"buffered": true, "sequence": input.Sequence})
-}
-
-func (r *Runtime) listAudit(writer http.ResponseWriter, request *http.Request) {
-	values := r.Audit.List(audit.Query{Component: request.URL.Query().Get("component"), Subject: request.URL.Query().Get("subject"), Limit: 100})
-	writeJSON(writer, http.StatusOK, map[string]any{"items": values})
 }
 
 func (r *Runtime) listPersistentEvents(writer http.ResponseWriter, request *http.Request) {
