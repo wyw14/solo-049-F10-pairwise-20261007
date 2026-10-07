@@ -2,6 +2,7 @@ package store
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +16,9 @@ type Event struct {
 	Stream    string         `json:"stream"`
 	Kind      string         `json:"kind"`
 	At        time.Time      `json:"at"`
+	Seq       uint64         `json:"seq,omitempty"`
+	Severity  string         `json:"severity,omitempty"`
+	Subject   string         `json:"subject,omitempty"`
 	Fields    map[string]any `json:"fields,omitempty"`
 	Operation string         `json:"operation,omitempty"`
 }
@@ -58,32 +62,49 @@ func (l *AppendLog) Append(event Event) error {
 }
 
 func (l *AppendLog) Read(stream string, limit int) ([]Event, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	file, err := os.Open(l.paths.Events(stream))
-	if os.IsNotExist(err) {
-		return []Event{}, nil
-	}
+	events, skipped, err := l.ReadAll(stream)
 	if err != nil {
-		return nil, fmt.Errorf("open event stream: %w", err)
+		return nil, err
 	}
-	defer file.Close()
-	var events []Event
-	scanner := bufio.NewScanner(file)
-	buffer := make([]byte, 64*1024)
-	scanner.Buffer(buffer, 1024*1024)
-	for scanner.Scan() {
-		var event Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			return nil, fmt.Errorf("decode event: %w", err)
-		}
-		events = append(events, event)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan events: %w", err)
+	if skipped > 0 {
+		return nil, fmt.Errorf("decode event: %d corrupt line(s) in stream %q", skipped, stream)
 	}
 	if limit > 0 && len(events) > limit {
 		events = events[len(events)-limit:]
 	}
 	return events, nil
+}
+
+// ReadAll reads every event in the stream. Undecodable lines are skipped and
+// counted so callers can detect gaps instead of losing the whole stream.
+func (l *AppendLog) ReadAll(stream string) (events []Event, skipped int, err error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	file, err := os.Open(l.paths.Events(stream))
+	if os.IsNotExist(err) {
+		return []Event{}, 0, nil
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("open event stream: %w", err)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	buffer := make([]byte, 64*1024)
+	scanner.Buffer(buffer, 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var event Event
+		if err := json.Unmarshal(line, &event); err != nil {
+			skipped++
+			continue
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, skipped, fmt.Errorf("scan events: %w", err)
+	}
+	return events, skipped, nil
 }

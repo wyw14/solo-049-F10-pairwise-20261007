@@ -59,7 +59,10 @@ func NewRuntime(stateRoot string) (*Runtime, error) {
 		return nil, err
 	}
 	log := store.NewAppendLog(paths)
-	trail := audit.NewTrail(log)
+	trail, err := audit.NewTrail(log)
+	if err != nil {
+		return nil, err
+	}
 	catalog, err := satellite.NewCatalog(paths)
 	if err != nil {
 		return nil, err

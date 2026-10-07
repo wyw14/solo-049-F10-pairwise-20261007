@@ -1,7 +1,9 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -38,8 +40,51 @@ func (r *Runtime) appendFrame(writer http.ResponseWriter, request *http.Request)
 }
 
 func (r *Runtime) listAudit(writer http.ResponseWriter, request *http.Request) {
-	values := r.Audit.List(audit.Query{Component: request.URL.Query().Get("component"), Subject: request.URL.Query().Get("subject"), Limit: 100})
-	writeJSON(writer, http.StatusOK, map[string]any{"items": values})
+	values := request.URL.Query()
+	query := audit.Query{
+		Component: values.Get("component"),
+		Subject:   values.Get("subject"),
+		PassID:    values.Get("pass_id"),
+		Operation: values.Get("operation"),
+		Severity:  audit.Severity(values.Get("severity")),
+		Limit:     100,
+	}
+	if raw := values.Get("since"); raw != "" {
+		since, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(writer, fmt.Errorf("invalid since timestamp: %w", err))
+			return
+		}
+		query.Since = since
+	}
+	if raw := values.Get("until"); raw != "" {
+		until, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(writer, fmt.Errorf("invalid until timestamp: %w", err))
+			return
+		}
+		query.Until = until
+	}
+	if raw := values.Get("cursor"); raw != "" {
+		cursor, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			writeError(writer, fmt.Errorf("invalid cursor: %w", err))
+			return
+		}
+		query.After = cursor
+	}
+	if raw := values.Get("limit"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit <= 0 {
+			writeError(writer, fmt.Errorf("invalid limit: %q", raw))
+			return
+		}
+		if limit > 1000 {
+			limit = 1000
+		}
+		query.Limit = limit
+	}
+	writeJSON(writer, http.StatusOK, r.Audit.List(query))
 }
 
 func (r *Runtime) listPersistentEvents(writer http.ResponseWriter, request *http.Request) {
